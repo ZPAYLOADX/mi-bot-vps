@@ -3,28 +3,25 @@ import threading
 import subprocess
 import string
 import random
-from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import mercadopago
 
-load_dotenv()
+# ==========================================
+# CONFIGURACIÓN DIRECTA DE CREDENCIALES
+# ==========================================
+TELEGRAM_BOT_TOKEN = "8385538827:AAHuS3-mcHEKuDJbqDqc0hPKhsu_OjHBuHw"
+ADMIN_ID = 8096590049  # Reemplaza por tu ID numérico de Telegram
+SUBADMIN_IDS = [987654321]  # IDs de subadmins separados por coma (ej: [987654321, 1122334455])
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-# CONFIGURACIÓN DE ROLES DE ADMINISTRACIÓN
-ADMIN_ID = int(os.getenv("ADMIN_ID", "8096590049")) # ID del Administrador Principal (Tú)
-SUBADMIN_IDS = [int(x) for x in os.getenv("SUBADMIN_IDS", "").split(",") if x.strip().isdigit()]
-
-MP_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_TOKEN", "APP_USR-7873838b-66bc-44da-9818-fc975319280c")
-DOMAIN_OR_IP = os.getenv("DOMAIN_OR_IP", "http://18.228.59.234:5000")
+MERCADO_PAGO_TOKEN = "APP_USR-7873838b-66bc-44da-9818-fc975319280c"
+DOMAIN_OR_IP = "http://18.228.59.234:5000"
 
 app = Flask(__name__)
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
+sdk = mercadopago.SDK(MERCADO_PAGO_TOKEN)
 
-# Mapeo de Planes (Incluyendo Demo)
 PLANES_INFO = {
     "demo_7h": {"title": "Demo VPS 7 Horas (1 Conexión)", "price": 120, "days": 0.29, "limite": 1},
     "7dias": {"title": "Plan 7 Días (1 Conexión)", "price": 1222, "days": 7, "limite": 1},
@@ -39,7 +36,6 @@ def is_admin(user_id):
 def is_subadmin(user_id):
     return user_id in SUBADMIN_IDS or is_admin(user_id)
 
-# Generador de credenciales SSH
 def generar_credenciales_ssh(user_id, dias, limite):
     username = f"usr_{user_id}_{random.randint(100, 999)}"
     password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
@@ -55,7 +51,7 @@ def generar_credenciales_ssh(user_id, dias, limite):
 def crear_preference_mp(plan_key, user_id):
     plan = PLANES_INFO.get(plan_key)
     if not plan:
-        return None
+        return None, "Plan no encontrado"
 
     preference_data = {
         "items": [
@@ -66,12 +62,24 @@ def crear_preference_mp(plan_key, user_id):
                 "currency_id": "ARS"
             }
         ],
-        "external_reference": f"{user_id}:{plan_key}",
-        "notification_url": f"{DOMAIN_OR_IP}/mercado_pago"
+        "external_reference": f"{user_id}:{plan_key}"
     }
 
-    preference_response = sdk.preference().create(preference_data)
-    return preference_response["response"].get("init_point")
+    if DOMAIN_OR_IP.startswith("http"):
+        preference_data["notification_url"] = f"{DOMAIN_OR_IP}/mercado_pago"
+
+    try:
+        preference_response = sdk.preference().create(preference_data)
+        response = preference_response.get("response", {})
+        init_point = response.get("init_point")
+        
+        if not init_point:
+            error_msg = response.get("message", "Token de Mercado Pago inválido o error en la API")
+            return None, error_msg
+            
+        return init_point, None
+    except Exception as e:
+        return None, str(e)
 
 # ==========================================
 # MENÚS INTERACTIVOS
@@ -168,23 +176,23 @@ def callback_listener(call):
         markup = InlineKeyboardMarkup()
 
         if method == "mp":
-            init_point = crear_preference_mp(plan_key, user_id)
+            init_point, error = crear_preference_mp(plan_key, user_id)
             if init_point:
                 text = (
                     "⚡ **Pago Automático vía Mercado Pago**\n\n"
                     "1. Haz clic en el botón de abajo para abonar.\n"
-                    "2. Una vez confirmado el pago de $120 ARS, se activará tu acceso.\n"
+                    "2. Una vez confirmado el pago, se activará tu servicio.\n"
                     "3. **Tus credenciales SSH llegarán automáticamente a este chat.**"
                 )
                 markup.add(InlineKeyboardButton("👉 Pagar con Mercado Pago", url=init_point))
             else:
-                text = "❌ Error al generar el enlace de Mercado Pago."
+                text = f"❌ **Error de Mercado Pago:**\n`{error}`\n\n_Verifica que tu MERCADO_PAGO_TOKEN sea válido._"
         else:
             text = (
                 "🌐 **Verificación Manual (Binance / PayPal / Transferencia)**\n\n"
                 "1. Efectúa el pago al medio correspondiente.\n"
                 "2. Envía el comprobante al **Administrador** o **Subadmin**.\n"
-                "3. Tu cuenta será dada de alta de inmediato mediante el panel de generación."
+                "3. Tu cuenta será dada de alta de inmediato."
             )
             markup.add(InlineKeyboardButton("📩 Contactar Soporte", callback_data="support"))
 
