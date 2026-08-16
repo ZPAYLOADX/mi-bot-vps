@@ -1,0 +1,5 @@
+Flask
+mercadopago
+python-telegram-bot
+python-dotenv
+requests
