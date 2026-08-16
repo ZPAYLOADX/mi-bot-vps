@@ -1,13 +1,42 @@
+import os
 import threading
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify
+import telebot
 
-# ... (Todo tu código de comandos del bot y funciones de Mercado Pago se mantiene arriba) ...
+# Cargar variables de entorno del archivo .env
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Declaración explícita de Flask y Telegram Bot
+app = Flask(__name__)
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # ==========================================
-# EJECUCIÓN PARALELA (FLASK + POLLING)
+# RUTAS DE FLASK (MERCADO PAGO / WEBHOOKS)
+# ==========================================
+@app.route('/', methods=['GET'])
+def index():
+    return "Servidor VPS activo y escuchando", 200
+
+@app.route('/mercado_pago', methods=['POST'])
+def mercado_pago_webhook():
+    # Lógica de notificación de pagos
+    data = request.get_json()
+    return jsonify({"status": "ok"}), 200
+
+# ==========================================
+# COMANDOS DEL BOT DE TELEGRAM
+# ==========================================
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "¡Hola! El bot de VPS está activo y listo.")
+
+# ==========================================
+# EJECUCIÓN EN PARALELO
 # ==========================================
 def run_flask():
-    # Ejecuta Flask en segundo plano para escuchar los Webhooks de Mercado Pago
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
 if __name__ == '__main__':
@@ -17,8 +46,5 @@ if __name__ == '__main__':
     flask_thread.start()
 
     print("[+] Iniciando Bot de Telegram en modo Polling directo...")
-    # Elimina cualquier webhook viejo antes de arrancar para evitar conflictos
     bot.remove_webhook()
-    
-    # Inicia la escucha continua de mensajes en Telegram
     bot.infinity_polling(skip_pending=True)
