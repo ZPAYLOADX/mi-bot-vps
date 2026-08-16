@@ -1,0 +1,125 @@
+
+import os
+import secrets
+import string
+import datetime
+import subprocess
+import requests
+import mercadopago
+from flask import Flask, request, jsonify
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde el archivo .env
+load_dotenv()
+
+MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+PORT = int(os.getenv("PORT", 5000))
+
+app = Flask(__name__)
+sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
+
+# Tabla de precios base (Días -> Precio unitario ARS)
+PRECIOS_BASE = {
+    7: 1222.0,
+    14: 2333.0,
+    30: 3200.0
+}
+
+def generar_password(longitud=8):
+    caracteres = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(caracteres) for _ in range(longitud))
+
+def crear_usuario_vps(usuario, password, dias, conexiones):
+    try:
+        fecha_exp = (datetime.date.today() + datetime.timedelta(days=dias)).strftime('%Y-%m-%d')
+        
+        # Crear usuario sin shell e ingresar fecha de expiración
+        cmd_user = f"useradd -M -s /bin/false -e {fecha_exp} {usuario}"
+        subprocess.run(cmd_user, shell=True, check=True)
+
+        # Asignar clave
+        cmd_pass = f"echo '{usuario}:{password}' | chpasswd"
+        subprocess.run(cmd_pass, shell=True, check=True)
+
+        # Límite de conexiones simultáneas en limits.conf
+        regla_limite = f"\n{usuario} hard maxlogins {conexiones}\n"
+        with open("/etc/security/limits.conf", "a") as f:
+            f.write(regla_limite)
+
+        return True
+    except Exception as e:
+        print(f"Error al crear usuario en VPS: {e}")
+        return False
+
+@app.route("/generar_pago", methods=["POST"])
+def generar_pago():
+    datos = request.json
+    chat_id = datos.get("chat_id")
+    dias = int(datos.get("dias"))
+    conexiones = int(datos.get("conexiones", 1))
+
+    precio_unidad = PRECIOS_BASE.get(dias, 1222.0)
+    precio_total = precio_unidad * conexiones
+    ref_datos = f"{chat_id}|{dias}|{conexiones}"
+
+    preference_data = {
+        "items": [
+            {
+                "title": f"Cuenta SSH ({dias} Dias / {conexiones} Conexiones)",
+                "quantity": 1,
+                "unit_price": float(precio_total),
+                "currency_id": "ARS"
+            }
+        ],
+        "external_reference": ref_datos,
+        "auto_return": "approved"
+    }
+
+    resultado = sdk.preference().create(preference_data)
+    url_pago = resultado["response"]["init_point"]
+
+    return jsonify({"url": url_pago, "total": precio_total}), 200
+
+@app.route("/webhook", methods=["POST"])
+def recibir_webhook():
+    datos = request.args
+    topic = datos.get("topic") or datos.get("type")
+
+    if topic == "payment":
+        payment_id = datos.get("id") or request.json.get("data", {}).get("id")
+
+        if payment_id:
+            payment_info = sdk.payment().get(payment_id)
+            if payment_info["response"]["status"] == "approved":
+                
+                ref = payment_info["response"]["external_reference"]
+                chat_id, dias_str, conexiones_str = ref.split("|")
+                dias = int(dias_str)
+                conexiones = int(conexiones_str)
+
+                usuario_ssh = f"usr{secrets.randbelow(8999) + 1000}"
+                password_ssh = generar_password()
+
+                creado = crear_usuario_vps(usuario_ssh, password_ssh, dias, conexiones)
+
+                if creado:
+                    mensaje = (
+                        f"✅ *¡PAGO CONFIRMADO CON ÉXITO!*\n\n"
+                        f"💻 *Tus Credenciales SSH:*\n"
+                        f"• *Usuario:* `{usuario_ssh}`\n"
+                        f"• *Contraseña:* `{password_ssh}`\n"
+                        f"• *Duración:* `{dias} días`\n"
+                        f"• *Límite de Conexiones:* `{conexiones}`\n\n"
+                        f"⚠️ _Guarda tus datos en un lugar seguro._"
+                    )
+                    requests.post(
+                        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                        json={"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"}
+                    )
+
+    return jsonify({"status": "ok"}), 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=PORT)
