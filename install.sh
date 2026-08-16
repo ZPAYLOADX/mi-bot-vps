@@ -74,9 +74,15 @@ sudo apt update -y > /dev/null 2>&1
 sudo apt install -y python3 python3-pip git nano curl > /dev/null 2>&1
 loading_bar 2
 
-# 3. Instalación de librerías de Python
+# 3. Instalación de librerías de Python (CORREGIDO PARA IGNORAR PAQUETES PROTEGIDOS)
 print_step "Instalando módulos Python (Flask, MercadoPago, Requests)..."
-pip install -r requisitos.txt > /dev/null 2>&1 || pip install -r requirements.txt > /dev/null 2>&1
+if [ -f "requisitos.txt" ]; then
+    sudo python3 -m pip install -r requisitos.txt --break-system-packages --ignore-installed > /dev/null 2>&1
+elif [ -f "requirements.txt" ]; then
+    sudo python3 -m pip install -r requirements.txt --break-system-packages --ignore-installed > /dev/null 2>&1
+else
+    sudo python3 -m pip install mercadopago flask requests python-dotenv --break-system-packages --ignore-installed > /dev/null 2>&1
+fi
 loading_bar 2
 
 # 4. Generación local del archivo .env
