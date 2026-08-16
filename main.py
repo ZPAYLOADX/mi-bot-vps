@@ -14,11 +14,11 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # CONFIGURACIÓN DE ROLES DE ADMINISTRACIÓN
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789")) # ID del Administrador Principal (Tú)
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8096590049")) # ID del Administrador Principal (Tú)
 SUBADMIN_IDS = [int(x) for x in os.getenv("SUBADMIN_IDS", "").split(",") if x.strip().isdigit()]
 
-MP_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_TOKEN", "TU_ACCESS_TOKEN_AQUI")
-DOMAIN_OR_IP = os.getenv("DOMAIN_OR_IP", "http://tu-vps-ip:5000")
+MP_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_TOKEN", "APP_USR-7873838b-66bc-44da-9818-fc975319280c")
+DOMAIN_OR_IP = os.getenv("DOMAIN_OR_IP", "http://18.228.59.234:5000")
 
 app = Flask(__name__)
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
