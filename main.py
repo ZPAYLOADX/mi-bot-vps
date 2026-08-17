@@ -28,7 +28,7 @@ DOMAIN_OR_IP = "http://18.228.59.234:5000"
 BINANCE_ID = "108562138"
 PAYPAL_URL = "https://www.paypal.me/Graciasxtudonacio"
 SUPPORT_USERNAME = "@Devstudio_MP"
-APP_DOWNLOAD_URL = "https://bit.ly/Aplicacionvpn"
+APP_DOWNLOAD_URL = "https://bit.ly/VPNMXAR"
 
 # ==========================================
 # CONFIGURACIÓN DE SERVIDORES Y REGIONES
