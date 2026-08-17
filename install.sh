@@ -78,30 +78,15 @@ fi
 echo -e "\n${CYAN}[i] Desplegando servicios para:${NC} ${GREEN}${DOMINIO_IP}${NC}"
 sleep 1
 
-# 2. Actualización del sistema y paquetes requeridos
-print_step "Actualizando paquetes e instalando dependencias de C, OpenSSL y Python..."
+# 2. Actualización del sistema y paquetes base
+print_step "Actualizando paquetes Linux e instalando dependencias de C/SSL..."
 apt update -y > /dev/null 2>&1
-apt install -y python3 python3-pip python3-venv build-essential libssl-dev libffi-dev git nano curl > /dev/null 2>&1
+apt install -y python3 python3-pip build-essential libssl-dev libffi-dev git nano curl > /dev/null 2>&1
 loading_bar 2
 
-# 3. Creación e instalación de módulos Python en un entorno virtual (venv)
-print_step "Creando entorno virtual e instalando módulos (Paramiko, Flask, MercadoPago, etc.)..."
-RUTA_ACTUAL=$(pwd)
-
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-fi
-
-source venv/bin/activate
-pip install --upgrade pip > /dev/null 2>&1
-
-if [ -f "requisitos.txt" ]; then
-    pip install -r requisitos.txt > /dev/null 2>&1
-elif [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt > /dev/null 2>&1
-else
-    pip install mercadopago flask requests python-dotenv paramiko python-telegram-bot > /dev/null 2>&1
-fi
+# 3. Instalación de librerías Python (Forzando la omisión de restricciones PEP 668)
+print_step "Instalando módulos Python (Paramiko, Telegram, MercadoPago, Flask)..."
+pip3 install paramiko python-telegram-bot mercadopago flask requests python-dotenv --break-system-packages > /dev/null 2>&1
 loading_bar 2.5
 
 # 4. Generación del archivo .env
@@ -124,9 +109,10 @@ loading_bar 1.5
 
 # 6. Verificación de existencia de main.py y creación del servicio Systemd
 print_step "Configurando el servicio en segundo plano (systemd)..."
+RUTA_ACTUAL=$(pwd)
 
 if [ ! -f "main.py" ]; then
-    echo -e "${YELLOW}[!] Advertencia: No se encontró 'main.py' en la ruta actual (${RUTA_ACTUAL}). Asegúrate de colocar tu script antes de iniciar el servicio.${NC}"
+    echo -e "${YELLOW}[!] Advertencia: No se encontró 'main.py' en ${RUTA_ACTUAL}.${NC}"
 fi
 
 cat <<EOF > /etc/systemd/system/bot-vps.service
@@ -137,7 +123,7 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=${RUTA_ACTUAL}
-ExecStart=${RUTA_ACTUAL}/venv/bin/python3 main.py
+ExecStart=/usr/bin/python3 main.py
 Restart=always
 RestartSec=5
 
@@ -157,7 +143,6 @@ echo -e "\n${CYAN}--------------------------------------------------${NC}"
 echo -e " ${GREEN}✔ SISTEMA DESPLEGADO Y OPERATIVO${NC}"
 echo -e "${CYAN}--------------------------------------------------${NC}"
 echo -e " ${WHITE}• Servicio:${NC}   ${GREEN}bot-vps.service (ACTIVO)${NC}"
-echo -e " ${WHITE}• Entorno:${NC}    ${CYAN}${RUTA_ACTUAL}/venv${NC}"
 echo -e " ${WHITE}• Webhook:${NC}    ${CYAN}https://${DOMINIO_IP}/telegram_webhook${NC}"
 echo -e " ${WHITE}• Estado:${NC}     ${YELLOW}sudo systemctl status bot-vps${NC}"
 echo -e " ${WHITE}• Logs:${NC}       ${YELLOW}sudo journalctl -u bot-vps -f${NC}"
