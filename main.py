@@ -6,6 +6,7 @@ import logging
 from flask import Flask, request, jsonify
 import threading
 import paramiko
+import asyncio
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -19,7 +20,7 @@ import mercadopago
 # CONFIGURACIÓN GENERAL Y CREDENCIALES
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8385538827:AAHuS3-mcHEKuDJbqDqc0hPKhsu_OjHBuHw"
-ADMIN_ID = 8096590049  # Cambia por tu ID numérico de Telegram si difiere
+ADMIN_ID = 8096590049  # ID numérico de Telegram del Administrador
 SUBADMIN_IDS = []
 
 MERCADO_PAGO_TOKEN = "APP_USR-7603040831612231-081604-a3bf932e40bc0add1c6a00ea941552df-453483723"
@@ -27,13 +28,15 @@ DOMAIN_OR_IP = "http://18.228.59.234:5000"
 
 BINANCE_ID = "108562138"
 PAYPAL_URL = "https://www.paypal.me/Graciasxtudonacio"
-SUPPORT_USERNAME = "@Devstudio_MP"
+SUPPORT_USERNAME = "Devstudio_MP"  # Sin el símbolo @ para evitar errores en URLs
 APP_DOWNLOAD_URL = "https://bit.ly/VPNMXAR"
+
+# Variable global para compartir la instancia de la app de Telegram con Flask
+telegram_app = None
 
 # ==========================================
 # CONFIGURACIÓN DE SERVIDORES Y REGIONES
 # ==========================================
-# Modifica estas IPs y credenciales SSH de acceso remoto según corresponda
 SERVIDORES_REGION = {
     "us": {
         "nombre": "🇺🇸 Estados Unidos",
@@ -106,7 +109,6 @@ def crear_usuario_ssh_remoto(region_code: str, user_id: int, conexiones: int):
         logger.info(f"Usuario {username} creado exitosamente en {server_info['nombre']} ({server_info['ip']})")
     except Exception as e:
         logger.error(f"Error creando usuario remoto en {server_info['ip']}: {e}")
-        # Fallback local en caso de error de conexión remota
         try:
             subprocess.run(["sudo", "useradd", "-M", "-s", "/bin/false", username], check=True)
             subprocess.run(["sudo", "chpasswd"], input=f"{username}:{password}".encode(), check=True)
@@ -146,7 +148,7 @@ def get_main_menu(user_id: int):
     buttons = [
         [InlineKeyboardButton("🛒 Comprar VPS / Solicitar Demo", callback_data="buy_vps")],
         [InlineKeyboardButton("📲 Descargar Aplicación VPN", url=APP_DOWNLOAD_URL)],
-        [InlineKeyboardButton("❓ Soporte Técnico Directo", url=f"https://t.me/{SUPPORT_USERNAME.replace('@','')}")],
+        [InlineKeyboardButton("❓ Soporte Técnico Directo", url=f"https://t.me/{SUPPORT_USERNAME}")],
     ]
     if is_admin(user_id):
         buttons.append([InlineKeyboardButton("👑 Panel de Administración", callback_data="admin_panel")])
@@ -197,7 +199,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 **Bienvenido a Servidores VPS High Speed**\n\n"
         f"Conexiones SSH de alto rendimiento y baja latencia.\n"
         f"📲 Descarga nuestra App oficial para conectarte.\n"
-        f"📩 Atención & Soporte Oficial: {SUPPORT_USERNAME}\n\n"
+        f"📩 Atención & Soporte Oficial: @{SUPPORT_USERNAME}\n\n"
         f"Selecciona una opción del menú:"
     )
     await update.message.reply_text(welcome_text, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
@@ -273,10 +275,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📌 **Monto a Confirmar:** equivalente a ${precio_total} ARS\n\n"
             f"✅ **Pasos siguientes:**\n"
             f"1. Realiza el pago por el monto seleccionado.\n"
-            f"2. Envía la captura/comprobante a soporte: {SUPPORT_USERNAME}\n"
+            f"2. Envía la captura/comprobante a soporte: @{SUPPORT_USERNAME}\n"
             f"3. Incluye tu ID de Telegram y Región en el mensaje: `{user_id}` ({region_code.upper()})"
         )
-        buttons = [[InlineKeyboardButton("📩 Enviar Comprobante", url=f"https://t.me/{SUPPORT_USERNAME.replace('@','')}")], [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="main_menu")]]
+        buttons = [[InlineKeyboardButton("📩 Enviar Comprobante", url=f"https://t.me/{SUPPORT_USERNAME}")], [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="main_menu")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown", disable_web_page_preview=True)
 
     elif data == "admin_panel":
@@ -313,7 +315,7 @@ async def alta_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⌛ **Duración:** {dias} días\n"
             f"📱 **Conexiones Permitidas:** {conexiones}\n\n"
             f"📲 **Descarga la app para conectarte:** {APP_DOWNLOAD_URL}\n"
-            f"💬 Soporte Oficial: {SUPPORT_USERNAME}"
+            f"💬 Soporte Oficial: @{SUPPORT_USERNAME}"
         )
         
         await context.bot.send_message(chat_id=target_id, text=msg_cliente, parse_mode="Markdown")
@@ -356,10 +358,9 @@ def mercado_pago_webhook():
                             f"🔑 **Contraseña:** `{ssh_pwd}`\n"
                             f"📱 **Conexiones:** {conexiones}\n\n"
                             f"📲 **Descarga la app para conectarte:** {APP_DOWNLOAD_URL}\n"
-                            f"💬 Soporte Técnico: {SUPPORT_USERNAME}"
+                            f"💬 Soporte Técnico: @{SUPPORT_USERNAME}"
                         )
                         
-                        # Notificación al Admin
                         msg_admin = (
                             f"💰 **¡NUEVA VENTA CONFIRMADA!**\n\n"
                             f"👤 **Cliente ID:** `{user_id}`\n"
@@ -369,13 +370,10 @@ def mercado_pago_webhook():
                             f"🔑 **SSH Creado:** `{ssh_usr}`"
                         )
 
-                        # Envío asíncrono con `python-telegram-bot`
-                        import asyncio
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        bot_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-                        loop.run_until_complete(bot_app.bot.send_message(chat_id=user_id, text=msg_cliente, parse_mode="Markdown"))
-                        loop.run_until_complete(bot_app.bot.send_message(chat_id=ADMIN_ID, text=msg_admin, parse_mode="Markdown"))
+                        # Envio seguro usando la instancia activa sin crear nuevos loops de asyncio
+                        if telegram_app:
+                            asyncio.run_coroutine_threadsafe(telegram_app.bot.send_message(chat_id=user_id, text=msg_cliente, parse_mode="Markdown"), telegram_app.loop)
+                            asyncio.run_coroutine_threadsafe(telegram_app.bot.send_message(chat_id=ADMIN_ID, text=msg_admin, parse_mode="Markdown"), telegram_app.loop)
 
     return jsonify({"status": "ok"}), 200
 
@@ -386,16 +384,17 @@ def run_flask():
 # INICIALIZACIÓN DEL BOT
 # ==========================================
 def main():
+    global telegram_app
     threading.Thread(target=run_flask, daemon=True).start()
 
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("alta", alta_manual))
-    application.add_handler(CallbackQueryHandler(callback_handler))
+    telegram_app.add_handler(CommandHandler("start", start_command))
+    telegram_app.add_handler(CommandHandler("alta", alta_manual))
+    telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 
     logger.info("Bot en marcha con éxito...")
-    application.run_polling(drop_pending_updates=True)
+    telegram_app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
