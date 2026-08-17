@@ -1,248 +1,330 @@
 import os
-import threading
-import subprocess
-import string
 import random
+import string
+import subprocess
+import logging
 from flask import Flask, request, jsonify
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import threading
+import paramiko
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
 import mercadopago
 
 # ==========================================
-# CONFIGURACIÓN DIRECTA DE CREDENCIALES
+# CONFIGURACIÓN GENERAL Y CREDENCIALES
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8385538827:AAHuS3-mcHEKuDJbqDqc0hPKhsu_OjHBuHw"
-ADMIN_ID = 8096590049  # Reemplaza por tu ID numérico de Telegram
-SUBADMIN_IDS = [987654321]  # IDs de subadmins separados por coma (ej: [987654321, 1122334455])
+ADMIN_ID = 5683935266  # Cambia por tu ID numérico de Telegram si difiere
+SUBADMIN_IDS = []
 
 MERCADO_PAGO_TOKEN = "APP_USR-7603040831612231-081604-a3bf932e40bc0add1c6a00ea941552df-453483723"
 DOMAIN_OR_IP = "http://18.228.59.234:5000"
 
-app = Flask(__name__)
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-sdk = mercadopago.SDK(MERCADO_PAGO_TOKEN)
+BINANCE_ID = "108562138"
+PAYPAL_URL = "https://www.paypal.me/Graciasxtudonacio"
+SUPPORT_USERNAME = "@Devstudio_MP"
+APP_DOWNLOAD_URL = "https://bit.ly/Aplicacionvpn"
 
-PLANES_INFO = {
-    "demo_7h": {"title": "Demo VPS 7 Horas (1 Conexión)", "price": 120, "days": 0.29, "limite": 1},
-    "7dias": {"title": "Plan 7 Días (1 Conexión)", "price": 1222, "days": 7, "limite": 1},
-    "7dias_2user": {"title": "Plan 7 Días (2 Conexiones)", "price": 2444, "days": 7, "limite": 2},
-    "14dias": {"title": "Plan 14 Días (1 Conexión)", "price": 2333, "days": 14, "limite": 1},
-    "30dias": {"title": "Plan 30 Días (1 Conexión)", "price": 3200, "days": 30, "limite": 1}
+# ==========================================
+# CONFIGURACIÓN DE SERVIDORES Y REGIONES
+# ==========================================
+# Modifica estas IPs y credenciales SSH de acceso remoto según corresponda
+SERVIDORES_REGION = {
+    "us": {
+        "nombre": "🇺🇸 Estados Unidos",
+        "ip": "18.228.59.234",
+        "port": 22,
+        "user": "root",
+        "password": "TU_PASSWORD_AQUI"
+    },
+    "br": {
+        "nombre": "🇧🇷 Brasil",
+        "ip": "177.0.0.1",
+        "port": 22,
+        "user": "root",
+        "password": "TU_PASSWORD_AQUI"
+    },
+    "ar": {
+        "nombre": "🇦🇷 Argentina",
+        "ip": "181.0.0.1",
+        "port": 22,
+        "user": "root",
+        "password": "TU_PASSWORD_AQUI"
+    }
 }
 
-def is_admin(user_id):
-    return user_id == ADMIN_ID
+# Configuración de Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def is_subadmin(user_id):
-    return user_id in SUBADMIN_IDS or is_admin(user_id)
+# Inicialización SDK Mercado Pago y Flask
+sdk = mercadopago.SDK(MERCADO_PAGO_TOKEN)
+app = Flask(__name__)
 
-def generar_credenciales_ssh(user_id, dias, limite):
+# Precios base en ARS por 1 conexión
+PLANES_BASE = {
+    "demo_7h": {"name": "🧪 Demo VPS (7 Horas)", "base_price": 120, "days": 0.29},
+    "7dias": {"name": "⚡ Plan 7 Días", "base_price": 1222, "days": 7},
+    "14dias": {"name": "🚀 Plan 14 Días", "base_price": 2333, "days": 14},
+    "30dias": {"name": "👑 Plan 30 Días", "base_price": 3200, "days": 30}
+}
+
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID or user_id in SUBADMIN_IDS
+
+# Generador y Administrador SSH Remoto vía Paramiko
+def crear_usuario_ssh_remoto(region_code: str, user_id: int, conexiones: int):
     username = f"usr_{user_id}_{random.randint(100, 999)}"
     password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
     
+    server_info = SERVIDORES_REGION.get(region_code, SERVIDORES_REGION["us"])
+    
     try:
-        subprocess.run(["sudo", "useradd", "-M", "-s", "/bin/false", username], check=True)
-        subprocess.run(["sudo", "chpasswd"], input=f"{username}:{password}".encode(), check=True)
-        return username, password
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # Conexión SSH al servidor específico
+        ssh.connect(
+            hostname=server_info["ip"],
+            port=server_info["port"],
+            username=server_info["user"],
+            password=server_info["password"],
+            timeout=10
+        )
+        
+        cmd_useradd = f"sudo useradd -M -s /bin/false {username}"
+        cmd_chpasswd = f"echo '{username}:{password}' | sudo chpasswd"
+        
+        ssh.exec_command(cmd_useradd)
+        ssh.exec_command(cmd_chpasswd)
+        ssh.close()
+        logger.info(f"Usuario {username} creado exitosamente en {server_info['nombre']} ({server_info['ip']})")
     except Exception as e:
-        print(f"Error al crear usuario SSH: {e}")
-        return username, password
+        logger.error(f"Error creando usuario remoto en {server_info['ip']}: {e}")
+        # Fallback local en caso de error de conexión remota
+        try:
+            subprocess.run(["sudo", "useradd", "-M", "-s", "/bin/false", username], check=True)
+            subprocess.run(["sudo", "chpasswd"], input=f"{username}:{password}".encode(), check=True)
+        except Exception as local_err:
+            logger.error(f"Error local en useradd: {local_err}")
 
-def crear_preference_mp(plan_key, user_id):
-    plan = PLANES_INFO.get(plan_key)
+    return username, password, server_info["nombre"]
+
+def crear_preference_mp(plan_key: str, conexiones: int, region_code: str, user_id: int):
+    plan = PLANES_BASE.get(plan_key)
     if not plan:
-        return None, "Plan no encontrado"
-
+        return None
+        
+    precio_total = float(plan["base_price"] * conexiones)
+    region_info = SERVIDORES_REGION.get(region_code, SERVIDORES_REGION["us"])
+    
     preference_data = {
         "items": [
             {
-                "title": plan["title"],
+                "title": f"{plan['name']} - {region_info['nombre']} ({conexiones} Conexión/es)",
                 "quantity": 1,
-                "unit_price": float(plan["price"]),
+                "unit_price": precio_total,
                 "currency_id": "ARS"
             }
         ],
-        "external_reference": f"{user_id}:{plan_key}"
+        "external_reference": f"{user_id}:{plan_key}:{conexiones}:{region_code}",
+        "notification_url": f"{DOMAIN_OR_IP}/mercado_pago"
     }
 
-    if DOMAIN_OR_IP.startswith("http"):
-        preference_data["notification_url"] = f"{DOMAIN_OR_IP}/mercado_pago"
-
-    try:
-        preference_response = sdk.preference().create(preference_data)
-        response = preference_response.get("response", {})
-        init_point = response.get("init_point")
-        
-        if not init_point:
-            error_msg = response.get("message", "Token de Mercado Pago inválido o error en la API")
-            return None, error_msg
-            
-        return init_point, None
-    except Exception as e:
-        return None, str(e)
+    response = sdk.preference().create(preference_data)
+    return response.get("response", {}).get("init_point")
 
 # ==========================================
-# MENÚS INTERACTIVOS
+# TECLADOS E INTERFAZ DE TELEGRAM
 # ==========================================
-def get_main_menu(user_id):
-    markup = InlineKeyboardMarkup()
+def get_main_menu(user_id: int):
+    buttons = [
+        [InlineKeyboardButton("🛒 Comprar VPS / Solicitar Demo", callback_data="buy_vps")],
+        [InlineKeyboardButton("📲 Descargar Aplicación VPN", url=APP_DOWNLOAD_URL)],
+        [InlineKeyboardButton("❓ Soporte Técnico Directo", url=f"https://t.me/{SUPPORT_USERNAME.replace('@','')}")],
+    ]
     if is_admin(user_id):
-        markup.add(InlineKeyboardButton("👑 Panel Principal Admin", callback_data="admin_panel"))
-        markup.add(InlineKeyboardButton("👥 Listar Clientes", callback_data="list_clients"))
-        markup.add(InlineKeyboardButton("🔑 Generar Acceso SSH Directo", callback_data="gen_ssh_menu"))
-    elif is_subadmin(user_id):
-        markup.add(InlineKeyboardButton("🛡️ Panel Subadmin (Verificaciones)", callback_data="subadmin_panel"))
-        markup.add(InlineKeyboardButton("🔑 Generar Acceso SSH Directo", callback_data="gen_ssh_menu"))
-    else:
-        markup.add(InlineKeyboardButton("💳 Comprar Acceso / Demo VPS", callback_data="buy_vps"))
-        markup.add(InlineKeyboardButton("📋 Mis Suscripciones", callback_data="my_subs"))
-        markup.add(InlineKeyboardButton("❓ Soporte Técnico", callback_data="support"))
-    return markup
+        buttons.append([InlineKeyboardButton("👑 Panel de Administración", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(buttons)
 
 def get_plans_menu():
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🧪 Demo 7 Horas (1 Conexión) - $120 ARS", callback_data="plan_demo_7h"))
-    markup.add(InlineKeyboardButton("⚡ 7 Días (1 Conexión) - $1222 ARS", callback_data="plan_7dias"))
-    markup.add(InlineKeyboardButton("⚡ 7 Días (2 Conexiones) - $2444 ARS", callback_data="plan_7dias_2user"))
-    markup.add(InlineKeyboardButton("🚀 14 Días (1 Conexión) - $2333 ARS", callback_data="plan_14dias"))
-    markup.add(InlineKeyboardButton("👑 30 Días (1 Conexión) - $3200 ARS", callback_data="plan_30dias"))
-    markup.add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="main_menu"))
-    return markup
+    buttons = [
+        [InlineKeyboardButton("🧪 Demo 7 Horas ($120 ARS/conn)", callback_data="sel_demo_7h")],
+        [InlineKeyboardButton("⚡ Plan 7 Días ($1222 ARS/conn)", callback_data="sel_7dias")],
+        [InlineKeyboardButton("🚀 Plan 14 Días ($2333 ARS/conn)", callback_data="sel_14dias")],
+        [InlineKeyboardButton("👑 Plan 30 Días ($3200 ARS/conn)", callback_data="sel_30dias")],
+        [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="main_menu")]
+    ]
+    return InlineKeyboardMarkup(buttons)
 
-def get_manual_gen_menu():
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🧪 Generar Demo 7 Horas", callback_data="manual_gen_demo_7h"))
-    markup.add(InlineKeyboardButton("⚡ Generar 7 Días", callback_data="manual_gen_7dias"))
-    markup.add(InlineKeyboardButton("⚡ Generar 7 Días (2 Conexiones)", callback_data="manual_gen_7dias_2user"))
-    markup.add(InlineKeyboardButton("🚀 Generar 14 Días", callback_data="manual_gen_14dias"))
-    markup.add(InlineKeyboardButton("👑 Generar 30 Días", callback_data="manual_gen_30dias"))
-    markup.add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="main_menu"))
-    return markup
+def get_connections_menu(plan_key: str):
+    buttons = []
+    plan = PLANES_BASE[plan_key]
+    for c in range(1, 6):
+        precio = plan['base_price'] * c
+        buttons.append([InlineKeyboardButton(f"📱 {c} Conexión(es) - ${precio} ARS", callback_data=f"region_{plan_key}_{c}")])
+    buttons.append([InlineKeyboardButton("⬅️ Seleccionar otro plan", callback_data="buy_vps")])
+    return InlineKeyboardMarkup(buttons)
 
-def get_payment_methods_menu(plan_key):
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("⚡ Mercado Pago (Automático 🤖)", callback_data=f"pay_mp_{plan_key}"))
-    markup.add(InlineKeyboardButton("🌐 Binance Pay / PayPal (Manual 📩)", callback_data=f"pay_crypto_{plan_key}"))
-    markup.add(InlineKeyboardButton("🏛️ Transferencia Bancaria (Manual 📩)", callback_data=f"pay_bank_{plan_key}"))
-    markup.add(InlineKeyboardButton("⬅️ Volver a Planes", callback_data="buy_vps"))
-    return markup
+def get_region_menu(plan_key: str, conexiones: int):
+    buttons = [
+        [InlineKeyboardButton("🇺🇸 Estados Unidos", callback_data=f"checkout_{plan_key}_{conexiones}_us")],
+        [InlineKeyboardButton("🇧🇷 Brasil", callback_data=f"checkout_{plan_key}_{conexiones}_br")],
+        [InlineKeyboardButton("🇦🇷 Argentina", callback_data=f"checkout_{plan_key}_{conexiones}_ar")],
+        [InlineKeyboardButton("⬅️ Volver a conexiones", callback_data=f"sel_{plan_key}")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_payment_methods_menu(plan_key: str, conexiones: int, region_code: str):
+    buttons = [
+        [InlineKeyboardButton("⚡ Mercado Pago (Automático 🤖)", callback_data=f"pay_mp_{plan_key}_{conexiones}_{region_code}")],
+        [InlineKeyboardButton("🌐 Binance Pay / PayPal (Manual 📩)", callback_data=f"pay_crypto_{plan_key}_{conexiones}_{region_code}")],
+        [InlineKeyboardButton("⬅️ Volver", callback_data=f"region_{plan_key}_{conexiones}")]
+    ]
+    return InlineKeyboardMarkup(buttons)
 
 # ==========================================
-# HANDLERS DEL BOT
+# HANDLERS Y MENSAJES
 # ==========================================
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    user_id = message.from_user.id
-    if is_admin(user_id):
-        text = "👑 **Panel de Administrador Principal**\nControl total de la plataforma activo."
-    elif is_subadmin(user_id):
-        text = "🛡️ **Panel de Subadministrador**\nGestión de accesos y verificación de pagos habilitada."
-    else:
-        text = "👋 **Bienvenido al Servicio VPS**\nSelecciona una opción para comenzar:"
-    bot.send_message(message.chat.id, text, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    welcome_text = (
+        f"👋 **Bienvenido a Servidores VPS High Speed**\n\n"
+        f"Conexiones SSH de alto rendimiento y baja latencia.\n"
+        f"📲 Descarga nuestra App oficial para conectarte.\n"
+        f"📩 Atención & Soporte Oficial: {SUPPORT_USERNAME}\n\n"
+        f"Selecciona una opción del menú:"
+    )
+    await update.message.reply_text(welcome_text, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback_listener(call):
-    user_id = call.from_user.id
-    chat_id = call.message.chat.id
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+    await query.answer()
 
-    if call.data == "main_menu":
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text("👋 **Menú Principal**\nSelecciona una opción:", chat_id, call.message.message_id, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
+    if data == "main_menu":
+        await query.edit_message_text("👋 **Menú Principal**\nSelecciona una opción:", reply_markup=get_main_menu(user_id), parse_mode="Markdown")
 
-    elif call.data == "buy_vps":
-        bot.answer_callback_query(call.id)
-        text_planes = (
-            "🛒 **Planes VPS y Demos Disponibles**\n\n"
-            "⚠️ **Aviso de Seguridad:**\n"
-            "Todos los planes corresponden a **1 conexión por usuario** (excepto el plan de 2 conexiones).\n"
-            "❌ *Si se detectan más conexiones de las permitidas, la cuenta será suspendida de manera automática.*\n\n"
-            "Selecciona el plan o demo que deseas adquirir:"
+    elif data == "buy_vps":
+        text = "🛒 **Selecciona la duración de tu suscripción o demo:**"
+        await query.edit_message_text(text, reply_markup=get_plans_menu(), parse_mode="Markdown")
+
+    elif data.startswith("sel_"):
+        plan_key = data.replace("sel_", "")
+        plan = PLANES_BASE[plan_key]
+        text = f"📱 **Elige cuántas conexiones simultáneas necesitas para:**\n*{plan['name']}*"
+        await query.edit_message_text(text, reply_markup=get_connections_menu(plan_key), parse_mode="Markdown")
+
+    elif data.startswith("region_"):
+        _, plan_key, conexiones = data.split("_")
+        conexiones = int(conexiones)
+        text = "🌐 **Selecciona la ubicación/región para tu servidor VPS:**"
+        await query.edit_message_text(text, reply_markup=get_region_menu(plan_key, conexiones), parse_mode="Markdown")
+
+    elif data.startswith("checkout_"):
+        _, plan_key, conexiones, region_code = data.split("_")
+        conexiones = int(conexiones)
+        plan = PLANES_BASE[plan_key]
+        region_info = SERVIDORES_REGION.get(region_code, SERVIDORES_REGION["us"])
+        precio_total = plan['base_price'] * conexiones
+        text = (
+            f"📋 **Resumen del Pedido**\n\n"
+            f"📦 **Servicio:** {plan['name']}\n"
+            f"🌐 **Ubicación:** {region_info['nombre']}\n"
+            f"📱 **Conexiones:** {conexiones}\n"
+            f"💰 **Total a Pagar:** ${precio_total} ARS\n\n"
+            f"Selecciona tu método de pago preferido:"
         )
-        bot.edit_message_text(text_planes, chat_id, call.message.message_id, reply_markup=get_plans_menu(), parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=get_payment_methods_menu(plan_key, conexiones, region_code), parse_mode="Markdown")
 
-    elif call.data.startswith("plan_"):
-        plan_key = call.data.replace("plan_", "")
-        plan_info = PLANES_INFO.get(plan_key, {}).get("title", "Plan VPS")
-        bot.answer_callback_query(call.id)
-        bot.edit_message_text(f"💳 **Método de Pago**\nHas elegido: **{plan_info}**.\n\nSelecciona cómo deseas abonar:", chat_id, call.message.message_id, reply_markup=get_payment_methods_menu(plan_key), parse_mode="Markdown")
-
-    elif call.data.startswith("pay_"):
-        parts = call.data.split("_")
-        method = parts[1]
-        plan_key = "_".join(parts[2:])
-        bot.answer_callback_query(call.id)
-
-        markup = InlineKeyboardMarkup()
-
-        if method == "mp":
-            init_point, error = crear_preference_mp(plan_key, user_id)
-            if init_point:
-                text = (
-                    "⚡ **Pago Automático vía Mercado Pago**\n\n"
-                    "1. Haz clic en el botón de abajo para abonar.\n"
-                    "2. Una vez confirmado el pago, se activará tu servicio.\n"
-                    "3. **Tus credenciales SSH llegarán automáticamente a este chat.**"
-                )
-                markup.add(InlineKeyboardButton("👉 Pagar con Mercado Pago", url=init_point))
-            else:
-                text = f"❌ **Error de Mercado Pago:**\n`{error}`\n\n_Verifica que tu MERCADO_PAGO_TOKEN sea válido._"
-        else:
+    elif data.startswith("pay_mp_"):
+        _, _, plan_key, conexiones, region_code = data.split("_")
+        conexiones = int(conexiones)
+        init_point = crear_preference_mp(plan_key, conexiones, region_code, user_id)
+        
+        if init_point:
+            buttons = [[InlineKeyboardButton("👉 Pagar con Mercado Pago", url=init_point)], [InlineKeyboardButton("⬅️ Volver", callback_data=f"checkout_{plan_key}_{conexiones}_{region_code}")]]
             text = (
-                "🌐 **Verificación Manual (Binance / PayPal / Transferencia)**\n\n"
-                "1. Efectúa el pago al medio correspondiente.\n"
-                "2. Envía el comprobante al **Administrador** o **Subadmin**.\n"
-                "3. Tu cuenta será dada de alta de inmediato."
+                "⚡ **Pago Automático vía Mercado Pago**\n\n"
+                "1. Presiona el botón de abajo para abonar.\n"
+                "2. Tras acreditarse, **el bot te entregará tus credenciales SSH de forma automática aquí en segundos.**"
             )
-            markup.add(InlineKeyboardButton("📩 Contactar Soporte", callback_data="support"))
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+        else:
+            await query.edit_message_text("❌ Error al conectar con Mercado Pago. Intenta nuevamente.", reply_markup=get_main_menu(user_id))
 
-        markup.add(InlineKeyboardButton("⬅️ Volver", callback_data=f"plan_{plan_key}"))
-        bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
-
-    elif call.data == "gen_ssh_menu":
-        bot.answer_callback_query(call.id)
-        if not is_subadmin(user_id):
-            bot.send_message(chat_id, "❌ No tienes permisos para esta opción.")
-            return
-        bot.edit_message_text("🔑 **Generación Manual de Cuentas SSH**\nSelecciona la duración o demo que deseas otorgar:", chat_id, call.message.message_id, reply_markup=get_manual_gen_menu(), parse_mode="Markdown")
-
-    elif call.data.startswith("manual_gen_"):
-        bot.answer_callback_query(call.id)
-        if not is_subadmin(user_id):
-            return
+    elif data.startswith("pay_crypto_"):
+        _, _, plan_key, conexiones, region_code = data.split("_")
+        plan = PLANES_BASE[plan_key]
+        region_info = SERVIDORES_REGION.get(region_code, SERVIDORES_REGION["us"])
+        precio_total = plan['base_price'] * int(conexiones)
         
-        plan_key = call.data.replace("manual_gen_", "")
-        plan = PLANES_INFO.get(plan_key)
+        text = (
+            "🌐 **Instrucciones para Pago Internacional / Cripto**\n\n"
+            f"🌐 **Servidor:** {region_info['nombre']}\n"
+            f"🟡 **Binance Pay ID:** `{BINANCE_ID}`\n"
+            f"💙 **PayPal:** [Clic para Pagar vía PayPal]({PAYPAL_URL})\n\n"
+            f"📌 **Monto a Confirmar:** equivalente a ${precio_total} ARS\n\n"
+            f"✅ **Pasos siguientes:**\n"
+            f"1. Realiza el pago por el monto seleccionado.\n"
+            f"2. Envía la captura/comprobante a soporte: {SUPPORT_USERNAME}\n"
+            f"3. Incluye tu ID de Telegram y Región en el mensaje: `{user_id}` ({region_code.upper()})"
+        )
+        buttons = [[InlineKeyboardButton("📩 Enviar Comprobante", url=f"https://t.me/{SUPPORT_USERNAME.replace('@','')}")], [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="main_menu")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown", disable_web_page_preview=True)
+
+    elif data == "admin_panel":
+        if not is_admin(user_id):
+            return
+        text = (
+            "👑 **Panel del Administrador**\n\n"
+            "Para activar a un usuario manualmente que pagó por Binance/PayPal/Transferencia, usa el comando:\n"
+            "`/alta <id_telegram> <dias> <conexiones> <region_code>`\n\n"
+            "**Regiones disponibles:** `us`, `br`, `ar`\n"
+            "**Ejemplo:** `/alta 123456789 30 2 us`"
+        )
+        await query.edit_message_text(text, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
+
+# Comando de Alta Manual por Admin
+async def alta_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        return
+
+    try:
+        target_id = int(context.args[0])
+        dias = float(context.args[1])
+        conexiones = int(context.args[2])
+        region_code = context.args[3].lower() if len(context.args) > 3 else "us"
+
+        ssh_usr, ssh_pwd, region_nombre = crear_usuario_ssh_remoto(region_code, target_id, conexiones)
         
-        if plan:
-            user_ssh, pass_ssh = generar_credenciales_ssh(user_id, plan["days"], plan["limite"])
-            duracion_txt = "7 Horas" if plan_key == "demo_7h" else f"{plan['days']} días"
-            msg = (
-                f"✅ **Acceso Creado Exitosamente**\n\n"
-                f"📦 **Plan:** {plan['title']}\n"
-                f"👤 **Usuario SSH:** `{user_ssh}`\n"
-                f"🔑 **Contraseña:** `{pass_ssh}`\n"
-                f"⌛ **Duración:** {duracion_txt}\n"
-                f"📱 **Límite:** {plan['limite']} conexión(es)\n\n"
-                "Copie y reenvíe estas credenciales al cliente."
-            )
-            bot.send_message(chat_id, msg, parse_mode="Markdown")
+        msg_cliente = (
+            f"✅ **¡Tu servicio VPS ha sido activado!**\n\n"
+            f"🌐 **Ubicación:** {region_nombre}\n"
+            f"👤 **Usuario SSH:** `{ssh_usr}`\n"
+            f"🔑 **Contraseña:** `{ssh_pwd}`\n"
+            f"⌛ **Duración:** {dias} días\n"
+            f"📱 **Conexiones Permitidas:** {conexiones}\n\n"
+            f"📲 **Descarga la app para conectarte:** {APP_DOWNLOAD_URL}\n"
+            f"💬 Soporte Oficial: {SUPPORT_USERNAME}"
+        )
+        
+        await context.bot.send_message(chat_id=target_id, text=msg_cliente, parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Usuario {target_id} activado exitosamente en {region_nombre}:\nSSH: `{ssh_usr}`", parse_mode="Markdown")
 
-    elif call.data == "support":
-        bot.answer_callback_query(call.id)
-        bot.send_message(chat_id, "📩 **Soporte Técnico**\nContacta con la administración para enviar tu comprobante de pago o solicitar asistencia.")
-
-    elif call.data == "my_subs":
-        bot.answer_callback_query(call.id)
-        bot.send_message(chat_id, "📋 **Tus Suscripciones**\nActualmente no posees cuentas SSH activas.")
+    except Exception as e:
+        await update.message.reply_text("❌ **Sintaxis incorrecta.** Uso: `/alta <id_telegram> <dias> <conexiones> <region_code>` (ej: `/alta 123456789 30 2 us`)")
 
 # ==========================================
-# WEBHOOK DE MERCADO PAGO
+# WEBHOOK SERVIDOR FLASK (Mercado Pago)
 # ==========================================
-@app.route('/', methods=['GET'])
-def index():
-    return "Servidor VPS Activo", 200
-
 @app.route('/mercado_pago', methods=['POST'])
 def mercado_pago_webhook():
     data = request.args
@@ -251,34 +333,69 @@ def mercado_pago_webhook():
     if topic == "payment":
         payment_id = data.get("data.id") or data.get("id")
         if payment_id:
-            payment_info = sdk.payment().get(payment_id)["response"]
+            payment_info = sdk.payment().get(payment_id).get("response", {})
             if payment_info.get("status") == "approved":
-                ext_ref = payment_info.get("external_reference")
-                if ext_ref and ":" in ext_ref:
-                    user_id_str, plan_key = ext_ref.split(":")
-                    user_id = int(user_id_str)
-                    plan = PLANES_INFO.get(plan_key)
+                ext_ref = payment_info.get("external_reference", "")
+                if ":" in ext_ref:
+                    parts = ext_ref.split(":")
+                    user_id = int(parts[0])
+                    plan_key = parts[1]
+                    conexiones = int(parts[2])
+                    region_code = parts[3] if len(parts) > 3 else "us"
+                    
+                    plan = PLANES_BASE.get(plan_key)
 
                     if plan:
-                        user_ssh, pass_ssh = generar_credenciales_ssh(user_id, plan["days"], plan["limite"])
-                        duracion_txt = "7 Horas" if plan_key == "demo_7h" else f"{plan['days']} Días"
-                        msg = (
-                            "✅ **¡Pago Confirmado Automáticamente!**\n\n"
-                            f"📦 **Servicio:** {plan['title']}\n"
-                            f"👤 **Usuario SSH:** `{user_ssh}`\n"
-                            f"🔑 **Contraseña:** `{pass_ssh}`\n"
-                            f"⌛ **Duración:** {duracion_txt}\n"
-                            f"📱 **Límite de Conexiones:** {plan['limite']}\n\n"
-                            "⚠️ *No excedas el límite de dispositivos para evitar la suspensión.*"
+                        ssh_usr, ssh_pwd, region_nombre = crear_usuario_ssh_remoto(region_code, user_id, conexiones)
+                        
+                        msg_cliente = (
+                            f"✅ **¡Pago Confirmado Automáticamente!**\n\n"
+                            f"📦 **Servicio:** {plan['name']}\n"
+                            f"🌐 **Ubicación:** {region_nombre}\n"
+                            f"👤 **Usuario SSH:** `{ssh_usr}`\n"
+                            f"🔑 **Contraseña:** `{ssh_pwd}`\n"
+                            f"📱 **Conexiones:** {conexiones}\n\n"
+                            f"📲 **Descarga la app para conectarte:** {APP_DOWNLOAD_URL}\n"
+                            f"💬 Soporte Técnico: {SUPPORT_USERNAME}"
                         )
-                        bot.send_message(user_id, msg, parse_mode="Markdown")
+                        
+                        # Notificación al Admin
+                        msg_admin = (
+                            f"💰 **¡NUEVA VENTA CONFIRMADA!**\n\n"
+                            f"👤 **Cliente ID:** `{user_id}`\n"
+                            f"📦 **Plan:** {plan['name']}\n"
+                            f"🌐 **Servidor:** {region_nombre}\n"
+                            f"📱 **Conexiones:** {conexiones}\n"
+                            f"🔑 **SSH Creado:** `{ssh_usr}`"
+                        )
+
+                        # Envío asíncrono con `python-telegram-bot`
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        bot_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+                        loop.run_until_complete(bot_app.bot.send_message(chat_id=user_id, text=msg_cliente, parse_mode="Markdown"))
+                        loop.run_until_complete(bot_app.bot.send_message(chat_id=ADMIN_ID, text=msg_admin, parse_mode="Markdown"))
 
     return jsonify({"status": "ok"}), 200
 
 def run_flask():
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
-if __name__ == '__main__':
+# ==========================================
+# INICIALIZACIÓN DEL BOT
+# ==========================================
+def main():
     threading.Thread(target=run_flask, daemon=True).start()
-    bot.remove_webhook()
-    bot.infinity_polling(skip_pending=True)
+
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("alta", alta_manual))
+    application.add_handler(CallbackQueryHandler(callback_handler))
+
+    logger.info("Bot en marcha con éxito...")
+    application.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
