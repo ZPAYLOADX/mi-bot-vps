@@ -19,7 +19,7 @@ import mercadopago
 # CONFIGURACIÓN GENERAL Y CREDENCIALES
 # ==========================================
 TELEGRAM_BOT_TOKEN = "8385538827:AAHuS3-mcHEKuDJbqDqc0hPKhsu_OjHBuHw"
-ADMIN_ID = 5683935266  # Cambia por tu ID numérico de Telegram si difiere
+ADMIN_ID = 8096590049  # Cambia por tu ID numérico de Telegram si difiere
 SUBADMIN_IDS = []
 
 MERCADO_PAGO_TOKEN = "APP_USR-7603040831612231-081604-a3bf932e40bc0add1c6a00ea941552df-453483723"
@@ -37,24 +37,24 @@ APP_DOWNLOAD_URL = "https://bit.ly/VPNMXAR"
 SERVIDORES_REGION = {
     "us": {
         "nombre": "🇺🇸 Estados Unidos",
-        "ip": "18.228.59.234",
+        "ip": "78.13.49.7",
         "port": 22,
         "user": "root",
-        "password": "TU_PASSWORD_AQUI"
+        "password": "master99@@"
     },
     "br": {
         "nombre": "🇧🇷 Brasil",
-        "ip": "177.0.0.1",
+        "ip": "18.228.59.234",
         "port": 22,
         "user": "root",
-        "password": "TU_PASSWORD_AQUI"
+        "password": "master9900@@"
     },
     "ar": {
         "nombre": "🇦🇷 Argentina",
-        "ip": "181.0.0.1",
+        "ip": "147.78.123.152",
         "port": 22,
         "user": "root",
-        "password": "TU_PASSWORD_AQUI"
+        "password": "lQw3LqCAEaJWVyMlbOWx"
     }
 }
 
