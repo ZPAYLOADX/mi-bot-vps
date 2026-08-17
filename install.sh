@@ -1,6 +1,14 @@
 #!/bin/bash
 
 # ==========================================
+# VERIFICACIÓN DE PERMISOS ROOT
+# ==========================================
+if [ "$EUID" -ne 0 ]; then
+    echo -e "\033[1;31m[!] Este script debe ejecutarse como root o con sudo.\033[0m"
+    exit 1
+fi
+
+# ==========================================
 # DEFINICIÓN DE COLORES Y ESTILOS (NEON)
 # ==========================================
 CYAN='\033[1;36m'
@@ -10,7 +18,6 @@ MAGENTA='\033[1;35m'
 RED='\033[1;31m'
 WHITE='\033[1;37m'
 NC='\033[0m'
-BOLD='\033[1m'
 
 # ==========================================
 # FUNCIONES DE ANIMACIÓN Y PROGRESO
@@ -24,7 +31,7 @@ banner() {
     echo "  ╚██╗ ██╔╝██╔═══╝ ╚════██║    ██╔══██╗██║  ██║   ██║   "
     echo "   ╚████╔╝ ██║     ███████║    ██████╔╝██████╔╝   ██║   "
     echo "    ╚═══╝  ╚═╝     ╚══════╝    ╚═════╝ ╚═════╝    ╚═╝   "
-    echo -e "${MAGENTA}   [ SYSTEM AUTO-INSTALLER & SSH MANAGER V2.0 ]${NC}"
+    echo -e "${MAGENTA}   [ SYSTEM AUTO-INSTALLER & SSH MANAGER V2.5 ]${NC}"
     echo -e "${CYAN}--------------------------------------------------${NC}"
     echo ""
 }
@@ -51,42 +58,54 @@ print_step() {
 # ==========================================
 banner
 
-# 1. Captura de Datos Interactiva y Segura
+# 1. Captura de Datos Interactiva
 echo -e "${CYAN}┌──(${WHITE}root🌐vps-server${CYAN})-[${WHITE}CONFIGURACIÓN DE RED Y TOKENS${CYAN}]${NC}"
 read -p "├─$ IP o DOMINIO de la VPS: " DOMINIO_IP
 read -p "├─$ TELEGRAM BOT TOKEN: " TELEGRAM_BOT_TOKEN
-read -p "├─$ TELEGRAM CHAT ID: " TELEGRAM_CHAT_ID
+read -p "├─$ TELEGRAM CHAT ID (Admin): " TELEGRAM_CHAT_ID
 read -p "├─$ MERCADO PAGO ACCESS TOKEN: " MP_ACCESS_TOKEN
-read -p "├─$ BINANCE ID (Opcional - Presiona Enter para omitir): " BINANCE_ID
-read -p "└─$ PAYPAL LINK (Opcional - Presiona Enter para omitir): " PAYPAL_LINK
+read -p "├─$ BINANCE ID (Opcional - Enter para omitir): " BINANCE_ID
+read -p "└─$ PAYPAL LINK (Opcional - Enter para omitir): " PAYPAL_LINK
+
+# Normalización del Dominio/IP (elimina prefijos http:// o https:// si se ingresan)
+DOMINIO_IP=$(echo "$DOMINIO_IP" | sed -e 's|^[^/]*//||' -e 's|/.*$||')
 
 if [ -z "$DOMINIO_IP" ] || [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ] || [ -z "$MP_ACCESS_TOKEN" ]; then
-    echo -e "\n${RED}[!] Error: Los campos IP, Bot Token, Chat ID y Mercado Pago Token son obligatorios.${NC}"
+    echo -e "\n${RED}[!] Error: IP/Dominio, Bot Token, Chat ID y Mercado Pago Token son obligatorios.${NC}"
     exit 1
 fi
 
 echo -e "\n${CYAN}[i] Desplegando servicios para:${NC} ${GREEN}${DOMINIO_IP}${NC}"
 sleep 1
 
-# 2. Actualización del sistema
-print_step "Actualizando paquetes base e instalando dependencias Linux..."
-sudo apt update -y > /dev/null 2>&1
-sudo apt install -y python3 python3-pip git nano curl > /dev/null 2>&1
+# 2. Actualización del sistema y paquetes requeridos
+print_step "Actualizando paquetes e instalando dependencias de C, OpenSSL y Python..."
+apt update -y > /dev/null 2>&1
+apt install -y python3 python3-pip python3-venv build-essential libssl-dev libffi-dev git nano curl > /dev/null 2>&1
 loading_bar 2
 
-# 3. Instalación de librerías de Python (CORREGIDO PARA IGNORAR PAQUETES PROTEGIDOS)
-print_step "Instalando módulos Python (Flask, MercadoPago, Requests)..."
-if [ -f "requisitos.txt" ]; then
-    sudo python3 -m pip install -r requisitos.txt --break-system-packages --ignore-installed > /dev/null 2>&1
-elif [ -f "requirements.txt" ]; then
-    sudo python3 -m pip install -r requirements.txt --break-system-packages --ignore-installed > /dev/null 2>&1
-else
-    sudo python3 -m pip install mercadopago flask requests python-dotenv --break-system-packages --ignore-installed > /dev/null 2>&1
+# 3. Creación e instalación de módulos Python en un entorno virtual (venv)
+print_step "Creando entorno virtual e instalando módulos (Paramiko, Flask, MercadoPago, etc.)..."
+RUTA_ACTUAL=$(pwd)
+
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
 fi
-loading_bar 2
 
-# 4. Generación local del archivo .env
-print_step "Inyectando variables de entorno en el servidor..."
+source venv/bin/activate
+pip install --upgrade pip > /dev/null 2>&1
+
+if [ -f "requisitos.txt" ]; then
+    pip install -r requisitos.txt > /dev/null 2>&1
+elif [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt > /dev/null 2>&1
+else
+    pip install mercadopago flask requests python-dotenv paramiko python-telegram-bot > /dev/null 2>&1
+fi
+loading_bar 2.5
+
+# 4. Generación del archivo .env
+print_step "Generando y protegiendo variables de entorno (.env)..."
 cat <<EOF > .env
 PORT=5000
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
@@ -95,18 +114,22 @@ MP_ACCESS_TOKEN=${MP_ACCESS_TOKEN}
 BINANCE_ID=${BINANCE_ID:-"N/A"}
 PAYPAL_LINK=${PAYPAL_LINK:-"N/A"}
 EOF
+chmod 600 .env
 loading_bar 1
 
-# 5. Configuración del Webhook en Telegram
+# 5. Enlace del Webhook con la API de Telegram
 print_step "Enlazando Webhook con la API de Telegram..."
 RESPONSE=$(curl -s -F "url=https://${DOMINIO_IP}/telegram_webhook" https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook)
 loading_bar 1.5
 
-# 6. Creación y activación del Servicio Systemd
+# 6. Verificación de existencia de main.py y creación del servicio Systemd
 print_step "Configurando el servicio en segundo plano (systemd)..."
-RUTA_ACTUAL=$(pwd)
 
-sudo cat <<EOF > /etc/systemd/system/bot-vps.service
+if [ ! -f "main.py" ]; then
+    echo -e "${YELLOW}[!] Advertencia: No se encontró 'main.py' en la ruta actual (${RUTA_ACTUAL}). Asegúrate de colocar tu script antes de iniciar el servicio.${NC}"
+fi
+
+cat <<EOF > /etc/systemd/system/bot-vps.service
 [Unit]
 Description=VPS AutoPay Bot & SSH Manager
 After=network.target
@@ -114,16 +137,17 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=${RUTA_ACTUAL}
-ExecStart=/usr/bin/python3 main.py
+ExecStart=${RUTA_ACTUAL}/venv/bin/python3 main.py
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable bot-vps > /dev/null 2>&1
-sudo systemctl restart bot-vps
+systemctl daemon-reload
+systemctl enable bot-vps > /dev/null 2>&1
+systemctl restart bot-vps
 loading_bar 2
 
 # ==========================================
@@ -133,6 +157,8 @@ echo -e "\n${CYAN}--------------------------------------------------${NC}"
 echo -e " ${GREEN}✔ SISTEMA DESPLEGADO Y OPERATIVO${NC}"
 echo -e "${CYAN}--------------------------------------------------${NC}"
 echo -e " ${WHITE}• Servicio:${NC}   ${GREEN}bot-vps.service (ACTIVO)${NC}"
+echo -e " ${WHITE}• Entorno:${NC}    ${CYAN}${RUTA_ACTUAL}/venv${NC}"
 echo -e " ${WHITE}• Webhook:${NC}    ${CYAN}https://${DOMINIO_IP}/telegram_webhook${NC}"
 echo -e " ${WHITE}• Estado:${NC}     ${YELLOW}sudo systemctl status bot-vps${NC}"
+echo -e " ${WHITE}• Logs:${NC}       ${YELLOW}sudo journalctl -u bot-vps -f${NC}"
 echo -e "${CYAN}--------------------------------------------------${NC}\n"
